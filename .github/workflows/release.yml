@@ -16,8 +16,7 @@
 # verify_version job 在构建前校验，版本号落后于上游时直接失败，避免发布标签、
 # Release 标题与二进制自报版本三者错位。
 #
-# 产物按系统给对应安装包：Ubuntu/Debian 给 .deb，Windows 给 Inno Setup .exe 安装器，
-# macOS 给 .dmg；另外附 Linux tar.gz 与三平台 remote-server 包。
+# 产物：macOS（Intel/x86_64）给 Zed-x86_64.dmg，附 zed-remote-server-macos-x86_64.gz。
 #
 # 注意：本文件不再由 `cargo xtask workflows` 生成，请勿运行该命令覆盖本文件。
 name: release
@@ -33,7 +32,7 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: 只构建三平台安装包，不创建 Release（验证流水线用）
+        description: 只构建 macOS x86_64 安装包，不创建 Release（验证流水线用）
         type: boolean
         default: false
 
@@ -62,228 +61,6 @@ jobs:
             exit 1
           fi
           echo "发布版本号：${version}"
-
-  bundle_linux_x86_64:
-    name: 构建 Linux x86_64
-    needs: verify_version
-    runs-on: ubuntu-22.04
-    timeout-minutes: 360
-    env:
-      # webrtc-sys 的 C++ 代码必须用 clang 17+ 编译（GCC 会把
-      # "changes meaning of Network" 当硬错误，且不认识 -Wno-changes-meaning）。
-      # ubuntu-22.04 默认 clang-14 太旧，需另行安装 clang-18。
-      CC: clang-18
-      CXX: clang++-18
-    steps:
-      - name: 检出代码
-        uses: actions/checkout@v4
-
-      # 仓库内 RELEASE_CHANNEL 保持 dev 供本地开发（dev 通道与正式版
-      # AppId/配置目录互相独立），发布构建统一覆盖为 stable 通道。
-      # 通道经 include_str! 编译进二进制，必须在 cargo 构建前写入。
-      - name: 设置发布通道为 stable
-        run: echo stable > crates/zed/RELEASE_CHANNEL
-
-      # 复用 rust-toolchain.toml 中固定的工具链版本
-      - name: 安装 Rust 工具链
-        run: rustup show
-
-      - name: 缓存 Rust 依赖
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-
-      - name: 安装 Linux 系统依赖
-        run: ./script/linux
-
-      - name: 安装 clang-18
-        run: |
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
-          echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-18 main" | sudo tee /etc/apt/sources.list.d/llvm-toolchain-18.list >/dev/null
-          sudo apt-get update
-          sudo apt-get install -y clang-18 lld-18 llvm-18
-
-      - name: 下载 wasi-sdk
-        run: ./script/download-wasi-sdk
-
-      - name: 打包 Linux
-        run: ./script/bundle-linux
-
-      - name: 打包 .deb（Ubuntu/Debian 安装包）
-        run: ./script/bundle-linux-deb
-
-      - name: 上传 zed-linux-x86_64.tar.gz
-        uses: actions/upload-artifact@v4
-        with:
-          name: zed-linux-x86_64.tar.gz
-          path: target/release/zed-linux-x86_64.tar.gz
-          if-no-files-found: error
-
-      - name: 上传 .deb 安装包
-        uses: actions/upload-artifact@v4
-        with:
-          name: zed-zh-cn-linux-x86_64.deb
-          path: target/release/zed-zh-cn_*_amd64.deb
-          if-no-files-found: error
-
-      - name: 上传 zed-remote-server-linux-x86_64.gz
-        uses: actions/upload-artifact@v4
-        with:
-          name: zed-remote-server-linux-x86_64.gz
-          path: target/zed-remote-server-linux-x86_64.gz
-          if-no-files-found: error
-
-  bundle_windows_x86_64:
-    name: 构建 Windows x86_64
-    needs: verify_version
-    # windows-2022 自带 Inno Setup 6 与 VS 2022（脚本已改用 vswhere 动态定位）
-    runs-on: windows-2022
-    timeout-minutes: 360
-    env:
-      # 缩短 cargo 缓存路径，规避 Windows 260 字符路径上限：
-      # pet 依赖的测试夹具路径极长，默认 CARGO_HOME 下 checkout 会超限。
-      CARGO_HOME: 'C:\c'
-    steps:
-      # 必须先于 checkout 执行：仓库含约 240 个符号链接（AGENTS.md、crates/*/LICENSE-GPL 等），
-      # GitHub Windows runner 默认未启用长路径支持与开发者模式，actions/checkout 创建符号链接
-      # 会报 "unable to create symlink ... Filename too long" 导致检出失败。
-      - name: 配置 Windows 长路径与符号链接支持
-        run: |
-          New-Item -ItemType Directory -Path C:\c -Force | Out-Null
-          try {
-            New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" `
-              -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force | Out-Null
-            git config --system core.longpaths true
-            # 启用开发者模式，允许非管理员进程创建符号链接（无需重启，后续进程立即生效）
-            New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock" `
-              -Name "AllowDevelopmentWithoutDevLicense" -Value 1 -PropertyType DWORD -Force | Out-Null
-          } catch {
-            Write-Warning "启用长路径/符号链接支持失败（已用缩短 CARGO_HOME 规避 cargo 路径问题）: $_"
-          }
-        shell: pwsh
-
-      - name: 检出代码
-        uses: actions/checkout@v4
-
-      - name: 设置发布通道为 stable
-        run: echo stable > crates/zed/RELEASE_CHANNEL
-        shell: bash
-
-      - name: 安装 Rust 工具链
-        run: rustup show
-        shell: pwsh
-
-      - name: 缓存 Rust 依赖
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-
-      - name: 打包 Windows（未签名）
-        run: script/bundle-windows.ps1 -Architecture x86_64
-        shell: pwsh
-
-      - name: 上传 Zed-x86_64.exe
-        uses: actions/upload-artifact@v4
-        with:
-          name: Zed-x86_64.exe
-          path: target/Zed-x86_64.exe
-          if-no-files-found: error
-
-      - name: 上传 zed-remote-server-windows-x86_64.zip
-        uses: actions/upload-artifact@v4
-        with:
-          name: zed-remote-server-windows-x86_64.zip
-          path: target/zed-remote-server-windows-x86_64.zip
-          if-no-files-found: error
-
-  bundle_macos_aarch64:
-    name: 构建 macOS aarch64
-    needs: verify_version
-    # macos-26 为 Apple Silicon（aarch64）runner，默认 Xcode 26（含 macOS 26 SDK）；
-    # 上游已要求 macOS 12 与 SDK 26，macos-14 的 Xcode 16 只带 SDK 15，打包会失败。
-    runs-on: macos-26
-    timeout-minutes: 360
-    env:
-      # 公共 runner 磁盘有限：去掉 release debuginfo（dSYM），避免构建中途磁盘耗尽
-      CARGO_PROFILE_RELEASE_DEBUG: "0"
-    steps:
-      - name: 检出代码
-        uses: actions/checkout@v4
-
-      - name: 设置发布通道为 stable
-        run: echo stable > crates/zed/RELEASE_CHANNEL
-
-      # 上游要求 macOS SDK 26 才能打包（bundle-mac 会校验 SDKROOT），显式检查而不是
-      # 假定 runner 自带：SDK 不是 26 及以上时直接失败，提示换用 macos-26。
-      - name: 校验 Xcode 与 macOS SDK 版本
-        run: |
-          xcodebuild -version
-          sdk_version="$(xcrun --sdk macosx --show-sdk-version)"
-          sdk_path="$(xcrun --sdk macosx --show-sdk-path)"
-          echo "macOS SDK: ${sdk_version} (${sdk_path})"
-          if [ "${sdk_version%%.*}" -lt 26 ]; then
-            echo "需要 macOS SDK 26 或更新，当前为 ${sdk_version}；请改用自带 Xcode 26 的 runner（macos-26）。" >&2
-            exit 1
-          fi
-
-      # 公共 runner 磁盘有限：仅保留当前 Xcode（macos-26 镜像带 26.0～26.6 多份副本，
-      # 每份十 GB 量级），删除其余副本与模拟器释放空间。删除逻辑以 xcode-select
-      # 输出为准，保留的工具链含 metal，不会破坏后续编译。
-      - name: 释放磁盘空间（仅保留当前 Xcode）
-        run: |
-          current="$(xcode-select -p | sed 's|/Contents/Developer$||')"
-          echo "保留 Xcode: $current"
-          for x in /Applications/Xcode*.app; do
-            if [ "$x" != "$current" ]; then
-              echo "删除: $x"
-              sudo rm -rf "$x"
-            fi
-          done
-          sudo rm -rf /Library/Developer/CoreSimulator/Volumes || true
-          sudo rm -rf /Library/Developer/CoreSimulator/Profiles/Runtimes || true
-          sudo rm -rf ~/Library/Caches/Homebrew 2>/dev/null || true
-          sudo rm -rf /Users/runner/Library/Android /Users/runner/.gradle /Users/runner/.m2 2>/dev/null || true
-          df -h /
-
-      - name: 安装 Rust 工具链
-        run: rustup show
-
-      - name: 缓存 Rust 依赖
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-
-      - name: 安装 cmake
-        run: |
-          export HOMEBREW_NO_AUTO_UPDATE=1
-          if ! command -v cmake >/dev/null 2>&1; then
-            brew install cmake
-          else
-            cmake --version | head -1
-          fi
-
-      # bundle-mac 内部用 npm 的 dmg-license 为 DMG 添加许可协议
-      - name: 安装 Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-
-      - name: 打包 macOS（未签名）
-        run: ./script/bundle-mac aarch64-apple-darwin
-
-      - name: 上传 Zed-aarch64.dmg
-        uses: actions/upload-artifact@v4
-        with:
-          name: Zed-aarch64.dmg
-          path: target/aarch64-apple-darwin/release/Zed-aarch64.dmg
-          if-no-files-found: error
-
-      - name: 上传 zed-remote-server-macos-aarch64.gz
-        uses: actions/upload-artifact@v4
-        with:
-          name: zed-remote-server-macos-aarch64.gz
-          path: target/zed-remote-server-macos-aarch64.gz
-          if-no-files-found: error
 
   bundle_macos_x86_64:
     name: 构建 macOS x86_64
@@ -379,9 +156,6 @@ jobs:
     name: 发布到 GitHub Release
     needs:
       - verify_version
-      - bundle_linux_x86_64
-      - bundle_windows_x86_64
-      - bundle_macos_aarch64
       - bundle_macos_x86_64
     runs-on: ubuntu-latest
     steps:
@@ -435,10 +209,7 @@ jobs:
             echo "> **Zed 汉化版** — 社区简体中文翻译构建，版本 v${VERSION}。"
             echo ">"
             echo "> ⚠️ **未签名说明**：本构建未经代码签名。"
-            echo "> - Windows：下载 \`Zed-x86_64.exe\` 安装器安装，安装时可能出现 SmartScreen 提示，选择\"更多信息 → 仍要运行\"。"
-            echo "> - macOS（Apple Silicon）：下载 \`Zed-aarch64.dmg\`；macOS（Intel）：下载 \`Zed-x86_64.dmg\`。首次打开可能被 Gatekeeper 拦截，右键选择\"打开\"，或执行 \`xattr -dr com.apple.quarantine /Applications/Zed.app\`。"
-            echo "> - Ubuntu / Debian：下载 \`zed-zh-cn_<版本>_amd64.deb\`，执行 \`sudo apt install ./zed-zh-cn_<版本>_amd64.deb\`（会自动装依赖）；也可用 \`sudo dpkg -i\` 后补 \`sudo apt -f install\`。"
-            echo "> - 其他 Linux：解压 \`zed-linux-x86_64.tar.gz\` 后运行 \`bin/zed\`。"
+            echo "> - macOS（Intel）：下载 \`Zed-x86_64.dmg\`，首次打开可能被 Gatekeeper 拦截，右键选择\"打开\"，或执行 \`xattr -dr com.apple.quarantine /Applications/Zed.app\`。"
             echo ""
             echo "---"
             echo ""
