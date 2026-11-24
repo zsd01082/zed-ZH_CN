@@ -68,12 +68,10 @@ jobs:
   bundle_macos_x86_64:
     name: 构建 macOS x86_64
     needs: verify_version
-    # x86_64 版在 Apple Silicon runner 上交叉编译：script/bundle-mac 原生支持
-    # x86_64-apple-darwin 目标（脚本内部 rustup target add + --target 构建），
-    # 无需 Intel runner。打包要求 macOS SDK 26：macos-26 镜像机器池小、常抢不到
-    # runner（"job was not acquired"），改用 macos-15 并显式选中镜像自带的
-    # Xcode 26.3（macOS SDK 26.2），效果相同且机器池充足。
-    runs-on: macos-15
+    # macos-26-intel 为原生 Intel（x86_64）runner（4 核 / 14 GB 内存），
+    # 默认自带 Xcode 26 与 macOS 26 SDK，满足上游 macOS 12 + SDK 26 打包要求，
+    # 避免在 ARM runner 上交叉编译的潜在兼容问题。
+    runs-on: macos-26-intel
     timeout-minutes: 360
     env:
       # 公共 runner 磁盘有限：去掉 release debuginfo（dSYM），避免构建中途磁盘耗尽
@@ -85,35 +83,34 @@ jobs:
       - name: 设置发布通道为 stable
         run: echo stable > crates/zed/RELEASE_CHANNEL
 
-      # macos-15 默认 Xcode 是 16.x（SDK 15），必须先切到镜像自带的 Xcode 26.3；
-      # 注意放在磁盘清理之前，确保被保留的"当前 Xcode"就是 26.3。
-      - name: 选择 Xcode 26.3
-        run: |
-          sudo xcode-select -s /Applications/Xcode_26.3.app/Contents/Developer
-          xcodebuild -version
-
-      # 上游要求 macOS SDK 26 才能打包（bundle-mac 会校验 SDKROOT），显式检查而不是
-      # 假定 runner 自带：SDK 不是 26 及以上时直接失败。
-      - name: 校验 Xcode 与 macOS SDK 版本
+      # 上游要求 macOS SDK 26 与 Metal 工具链才能打包（bundle-mac 会校验 SDKROOT，
+      # gpui_apple 构建脚本会调用 xcrun metal），显式校验并在缺少 MetalToolchain 时自动补装。
+      - name: 校验 Xcode、macOS SDK 与 Metal 工具链
         run: |
           xcodebuild -version
           sdk_version="$(xcrun --sdk macosx --show-sdk-version)"
           sdk_path="$(xcrun --sdk macosx --show-sdk-path)"
           echo "macOS SDK: ${sdk_version} (${sdk_path})"
           if [ "${sdk_version%%.*}" -lt 26 ]; then
-            echo "需要 macOS SDK 26 或更新，当前为 ${sdk_version}；请检查 runner 镜像是否带 Xcode 26.x 并已 xcode-select 选中。" >&2
+            echo "需要 macOS SDK 26 或更新，当前为 ${sdk_version}；请检查 runner 镜像与 Xcode 版本。" >&2
             exit 1
           fi
+          if ! xcrun --find metal >/dev/null 2>&1; then
+            echo "未检测到 Metal 工具链，尝试下载 MetalToolchain..."
+            xcodebuild -downloadComponent MetalToolchain
+          fi
+          xcrun --find metal
 
-      # 公共 runner 磁盘有限：仅保留当前 Xcode（macos-15 镜像带多份 Xcode 副本，
-      # 每份十 GB 量级），删除其余副本与模拟器释放空间。删除逻辑以 xcode-select
-      # 输出为准，保留的工具链含 metal，不会破坏后续编译。
+      # 公共 runner 磁盘有限：仅保留当前 Xcode（macos-26-intel 镜像带多份 Xcode 副本，
+      # 每份十 GB 量级），删除其余副本与模拟器释放空间。同时比对真实路径避免误删软链目标。
       - name: 释放磁盘空间（仅保留当前 Xcode）
         run: |
           current="$(xcode-select -p | sed 's|/Contents/Developer$||')"
-          echo "保留 Xcode: $current"
+          current_real="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$current")"
+          echo "保留 Xcode: $current (realpath: $current_real)"
           for x in /Applications/Xcode*.app; do
-            if [ "$x" != "$current" ]; then
+            x_real="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$x")"
+            if [ "$x" != "$current" ] && [ "$x_real" != "$current_real" ]; then
               echo "删除: $x"
               sudo rm -rf "$x"
             fi
