@@ -1,6 +1,6 @@
 ---
 type: index
-updated: 2026-11-08
+updated: 2026-11-23
 ---
 
 # Wiki 索引
@@ -14,7 +14,7 @@ updated: 2026-11-08
 
 - [汉化 fork 同步 upstream 的合并模式与特性保留清单](concepts/fork-upstream-sync.md) — fetch 走 HTTPS、diff 判读陷阱、i18n×上游重构冲突解法、内部状态模型重构×fork 特性读旧字段、文案随模块迁移、上游新增测试×fork 特性语义分歧、特性保留清单
 - [汉化口径与批量替换工作流](concepts/i18n-localization-workflow.md) — 汉化/不汉化口径、mkplan+apply 批量流程、t! 返回类型适配、全量 clippy 门禁、未覆盖项
-- [fork 发布 release 的流程与版本号策略](concepts/fork-release-publishing.md) — v* 标签触发 release.yml、版本号由发布者指定且不落后上游正式版（`scripts/sync-upstream-version.py` + CI 三重校验）、三平台安装包（deb/exe/dmg）与 deb 打包要点、本地 Ubuntu 构建 Linux 安装包的可复现步骤（CRLF 脚本、版本化 clang/lld、CXX 强制传递、缺 dev 库软链），含 v1.27.0/v1.29.0/v1.29.1 发版记录
+- [fork 发布 release 的流程与版本号策略](concepts/fork-release-publishing.md) — v* 标签触发 release.yml、版本号由发布者指定且不落后上游正式版（`scripts/sync-upstream-version.py` + CI 三重校验）、三平台安装包（deb/exe/dmg）与 deb 打包要点、许可证门禁拦 AGPL（`pdf-render` 锁 1.3.0）、`verify_version` 需 runner token 避免 GitHub API 限流、本地 Ubuntu 构建 Linux 安装包的可复现步骤（CRLF 脚本、版本化 clang/lld、CXX 强制传递、缺 dev 库软链），含 v1.27.0/v1.29.0/v1.29.1/v1.31.0 发版记录
 
 ## 源总结 sources
 
@@ -30,5 +30,6 @@ updated: 2026-11-08
 - [macOS 打包要求 SDK 26：macos-14 runner 上 bundle-mac 失败](queries/macos-bundle-sdk-26-requirement.md) — 上游要求 SDK 26，macos-14 自带 Xcode 16 只有 SDK 15；改用 macos-26 并显式校验 SDK，附标签触发失败后用 workflow_dispatch 重跑的提交对齐说明
 - [2026-10 合并上游 main：冲突消解决策与编译失败链](queries/upstream-merge-2026-10.md) — 297 提交合并的取舍清单、六轮编译失败链（image_resolver 两参数、SharedString 补 `.into()`、`t!` 分支类型、redundant_clone）、历史丢失检测与本地校验清单；附二次合并（`28d0a3547f`，零冲突）、三次合并（`91d3b962ae3`，17 处冲突）、四次合并（`604a0ff023`，零冲突）、五次合并（`422b53cff8`，98 提交 / 11 处冲突，含上游删模块与 ACP 字段改访问器的跟进）记录
 - [2026-11-13 合并 upstream/main（1.30.0，76 提交）：冲突消解与 fork 特性核对](queries/upstream-merge-2026-11-13.md) — 9 处冲突（workflow 取删除、版本行保 1.29.1、lock 重裁、`PromptButton`/`t!` 保留、设置分节与安全弹窗取上游新结构、表内设置面板与上游动作并存）、7 个新增汉化键与 1 个失效键、clippy/测试验证与 webrtc 本地编译要点，并把「已知本地失败 test_history_tab_focus_border_only_for_keyboard_focus」定位为构造函数重复创建焦点句柄并修复（`a111afd787`）
+- [2026-11-23 合并 upstream/main（1.31.0，135 提交）：冲突消解、既有 fork 回归修复与验证](queries/upstream-merge-2026-11-23.md) — 27 处冲突（workflow 取删除、`.rules`/`AGENTS.md` 保留 fork、`agent_model_selector` 随上游并入新 crate 取删除、ACP 配置渲染重排、sidebar 工作树子菜单重构）、6 个新增汉化键、`language_model_selector` 缺 `zed_i18n` 编译失败链，以及两项既有 fork 回归（窗口失活守卫、删除确认框收敛到 `build_removal_prompt`）与 `location()` 语义变化的测试适配
 - [2026-11 合并上游 main：冲突消解、编译失败链与 fork 特性核对](queries/upstream-merge-2026-11.md) — 1.29.0（77 提交）合并：13 处冲突（git 面板分支模式、plan 渲染、日期格式设置）、六轮编译失败链（PromptButton 缺失、SharedString/`Cow`、`Fn` 闭包 clone）、汉化补齐 68 个键（settings_ui 49 / git_ui 15 / agent_ui 3 / git_ui_core 1）与「计数对比」审计法、fork 修复与上游实现逐项核对表
 - [新建智能体会话慢](queries/slow-new-agent-session.md) — ACP registry 智能体二进制首次下发（opencode-v2 2.2.6，258 MB，约 97 秒）是主因；目录路径被当文件读取的 2979 条错误已修（`resolve_location` 先查路径类型，附 `FakeFs::read_call_count` 回归测试）
